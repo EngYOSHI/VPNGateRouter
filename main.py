@@ -16,7 +16,7 @@ def main():
     server_list = get_server_list() # VPNGateのサーバ情報を取得
 
 
-def get_server_list():
+def get_server_list(country:str = None, port:int = None):
     l = []
     with requests.Session() as s:
         print_debug("Getting VPNGate server list csv.")
@@ -37,8 +37,13 @@ def get_server_list():
             # hostname, ip, port, score, ping, speed, country, num_vpn_sessions, uptime, operator
             sinfo = ServerConnectInfo(s[0], s[1], get_port_from_openvpn(s[14]), s[2], s[3], s[4],
                                       s[6], s[7], s[8], s[12])
+            if country is not None and sinfo.country != country:
+                continue
+            if port is not None and sinfo.port != port:
+                continue
             l.append(sinfo)
             print_debug(repr(sinfo), False)
+        l.sort(key=lambda x: x.score)
         return l
 
 
@@ -76,9 +81,21 @@ class ServerConnectInfo:
         self.num_vpn_sessions = num_vpn_sessions
         self.uptime = uptime
         self.operator = operator
+    
+    def get_speed(self):
+        unit = ["B", "KB", "MB", "GB", "TB", "PB"]
+        index_unit = 0
+        speed = int(self.speed)
+        while True:
+            if speed >= 1000:
+                index_unit += 1
+                speed /= 1000
+            else:
+                break
+        return f"{speed:.2f}{unit[index_unit]}/s"
 
     def __repr__(self):
-        return f"{self.hostname}: {self.ip}:{self.port} ({self.country})"
+        return f"{self.hostname}: {self.ip}:{self.port} ({self.country}) Score:{self.score} Ping:{self.ping}ms {self.get_speed()}"
 
 
 def print_debug(msg, banner=True, end='\n'):
