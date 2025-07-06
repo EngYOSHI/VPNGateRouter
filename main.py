@@ -7,14 +7,173 @@ import base64
 import re
 from io import StringIO
 import time
+import subprocess
 
-CSV_URL = "https://www.vpngate.net/api/iphone/"
-DEBUG = True
+CSV_URL: str = "https://www.vpngate.net/api/iphone/"
+DEBUG: bool = False
+IP_LOCAL: str = "192.168.19.0/24"
+IP_GATEWAY: str = "10.0.10.254"
+NIC_UPSTREAM: str = "eth0"
+NIC_VPN: str = "br_eth1"
+NIC_VPNGATE: str = "vpn_vpngate"
+VPNGATE_FIX: str = None  # "118.106.1.118:1496"
+VPNGATE_COUNTRY: str = "JP"
+VPNGATE_PORT: int = 443
 
 
 def main():
     print_debug("Started.")
-    server_list = get_server_list()  # VPNGateのサーバ情報を取得
+    init()  # 初期設定
+    host = get_bestserver(
+        VPNGATE_COUNTRY, VPNGATE_PORT
+    )  # ベストなVPNGateのサーバ情報を取得
+    vpngateip = host.split(":")[0]  # IPアドレス部分を抽出
+    vpn_connect(host)  # ベストなVPNGateサーバに接続
+    ipconfig(vpngateip)  # IPアドレスを設定
+
+
+def init():
+    # IPマスカレードの設定
+    print("Setting up ip masquerade...")
+    res = runcmd(
+        [
+            "iptables",
+            "-t",
+            "nat",
+            "-A",
+            "POSTROUTING",
+            "-s",
+            IP_LOCAL,
+            "-o",
+            NIC_VPNGATE,
+            "-j",
+            "MASQUERADE",
+        ]
+    )
+    if res.returncode != 0:
+        print_error(
+            "NAT Config",
+            f"iptables command failed. Error information is below.\n{res.stderr}",
+        )
+
+
+def ipconfig(vpngateip: str):
+    # DHCPにてIP取得
+    print("Obtaining IP Address from vpngate server...")
+    open("lease.txt", "w").close()  # lease情報の保存先を作成
+    res = runcmd(
+        ["dhclient", "-v", "-sf", "/bin/true", "-lf", "lease.txt", "vpn_vpngate"]
+    )
+    if res.returncode != 0:
+        print_error(
+            "dhclient", f"dhclient failed. Error information is below.\n{res.stderr}"
+        )
+    # 情報抽出
+    with open("lease.txt", "r") as f:
+        lease_text = f.read()
+    print_debug(f"DHCP Lease information\n{lease_text}")
+    fixed_address_match = re.search(r"fixed-address\s+([\d.]+);", lease_text)
+    fixed_address = fixed_address_match.group(1) if fixed_address_match else None
+    routers_match = re.search(r"option routers\s+([\d.]+);", lease_text)
+    routers = routers_match.group(1) if routers_match else None
+    if fixed_address is None or routers is None:
+        print_error("ParseDHCPData", "Obtained dhcp data was not valid.")
+    fixed_address += "/16"
+    print(f"Obtained IP: {fixed_address}  GW:{routers}")
+    # 静的経路設定
+    res = runcmd(
+        ["ip", "route", "add", vpngateip, "via", IP_GATEWAY, "dev", NIC_UPSTREAM]
+    )
+    if res.returncode != 0:
+        print_error(
+            "IP Route Add",
+            f"ip route add failed. Error information is below.\n{res.stderr}",
+        )
+    # IP設定
+    res = runcmd(["ip", "addr", "add", fixed_address, "dev", NIC_VPNGATE])
+    if res.returncode != 0:
+        print_error(
+            "IP Addr Add",
+            f"ip addr add failed. Error information is below.\n{res.stderr}",
+        )
+    res = runcmd(["ip", "route", "add", "default", "via", routers, "dev", NIC_VPNGATE])
+    if res.returncode != 0:
+        print_error(
+            "IP Route Add Default",
+            f"ip addr add default failed. Error information is below.\n{res.stderr}",
+        )
+    res = runcmd(["curl", "inet-ip.info"])
+    if res.returncode != 0:
+        print_error(
+            "GetWANIP", f"curl failed. Error information is below.\n{res.stderr}"
+        )
+    print(f"IP Configuration OK. WAN IP: {res.stdout}")
+
+
+def get_bestserver(country, port) -> str:
+    print("Getting best vpngate server...")
+    server_list = get_server_list(country, port)
+    if len(server_list) == 0:
+        print_error("GetBestServer", "No server found.")
+    print(f"Done. Info:{server_list[0]}")
+    return server_list[0].get_host()
+
+
+def vpn_connect(host: str):
+    # 接続情報の設定
+    print("Setting vpngate server address...")
+    res = runvpncmd(["accountset", "vpngate", f"/server:{host}", "/hub:vpngate"])
+    if errcheck_vpncmd_res(res):
+        print_error(
+            "VPNCMD_Set",
+            f"Accountset command failed. Error information is below.\n{res.stdout}",
+        )
+    # 接続
+    print("Connecting to vpngate server...")
+    res = runvpncmd(["accountconnect", "vpngate"])
+    if errcheck_vpncmd_res(res):
+        print_error(
+            "VPNCMD_Connect",
+            f"Connect command failed. Error information is below.\n{res.stdout}",
+        )
+    # 接続状況確認
+    print("Checking connection...")
+    while True:
+        (valid, status) = vpn_status("Session Status")
+        if valid and status == "Connection Completed (Session Established)":
+            break
+        time.sleep(1)
+    print("Connection process done.")
+
+
+def runcmd(command: list[str]) -> subprocess.CompletedProcess:
+    res = subprocess.run(command, check=False, capture_output=True, text=True)
+    print_debug(f"RunCMD_args: {' '.join(res.args)}")
+    print_debug(f"RunCMD_stdout: {res.stdout}")
+    print_debug(f"RunCMD_stderr: {res.stderr}")
+    return res
+
+
+def runvpncmd(command: list[str]) -> subprocess.CompletedProcess:
+    command = ["vpncmd", "localhost", "/client", "/cmd"] + command
+    return runcmd(command)
+
+
+def vpn_status(key: str) -> (bool, str):
+    res = runvpncmd(["accountstatusget", "vpngate"])
+    if errcheck_vpncmd_res(res):
+        return (False, None)
+    match = re.search(rf"{re.escape(key)}\s+\|(.+)", res.stdout)
+    if match:
+        return (True, match.group(1).strip())
+    else:
+        return (False, None)
+
+
+def errcheck_vpncmd_res(res: subprocess.CompletedProcess) -> bool:
+    if res.stdout[-3].rfind("The command completed successfully."):
+        return False
+    return True
 
 
 def get_server_list(country: str = None, port: int = None):
@@ -119,6 +278,9 @@ class ServerConnectInfo:
                 break
         return f"{speed:.2f}{unit[index_unit]}/s"
 
+    def get_host(self):
+        return f"{self.ip}:{self.port}"
+
     def __repr__(self):
         return f"{self.hostname}: {self.ip}:{self.port} ({self.country}) Score:{self.score} Ping:{self.ping}ms {self.get_speed()}"
 
@@ -131,10 +293,18 @@ def print_debug(msg, banner=True, end="\n"):
             print(str(msg), end=end)
 
 
-def print_error(errtype, errmsg):
+def print_error(errtype, errmsg, exit_after_print: bool = True):
     print("\033[31m" + str(errtype) + ": " + str(errmsg) + "\033[0m")
+    if exit_after_print:
+        exit(1)
+
+
+def chkroot():
+    if os.geteuid() != 0 or os.getuid() != 0:
+        print_error("chkroot", "Run As Root!!!")
 
 
 if __name__ == "__main__":
     os.system("")  # Windowsにて、色付き文字を出力するためのおまじない
+    chkroot()
     main()
