@@ -25,15 +25,14 @@ status_error_event = Event()
 
 
 def main():
-    last: str = None  # 最後に接続したサーバ
+    vpngateip: str = None  # 最後に接続したサーバ
     try:
         print_debug("Started.")
         init()  # 初期設定
         while True:
             # ベストなVPNGateのサーバ情報を取得
-            host = get_bestserver(last, VPNGATE_COUNTRY, VPNGATE_PORT)
+            host = get_bestserver(vpngateip, VPNGATE_COUNTRY, VPNGATE_PORT)
             vpngateip = host.split(":")[0]  # IPアドレス部分を抽出
-            last = vpngateip
             vpn_connect(host)  # ベストなVPNGateサーバに接続
             ipconfig(vpngateip)  # IPアドレスを設定
             # 死活監視スレッドを実行
@@ -49,6 +48,7 @@ def main():
                     break
     except KeyboardInterrupt:
         print("exitting...")
+        clean(vpngateip)
 
 
 def init():
@@ -72,6 +72,33 @@ def init():
     if res.returncode != 0:
         print_error(
             "NAT Config",
+            f"iptables command failed. Error information is below.\n{res.stderr}",
+        )
+
+
+def clean(vpngateip):
+    ipreset(vpngateip)  # IP設定を解除
+    vpn_disconnect()  # VPN切断
+    # IPマスカレードの解除
+    print("cleaning ip masquerade setting...")
+    res = runcmd(
+        [
+            "iptables",
+            "-t",
+            "nat",
+            "-D",
+            "POSTROUTING",
+            "-s",
+            IP_LOCAL,
+            "-o",
+            NIC_VPNGATE,
+            "-j",
+            "MASQUERADE",
+        ]
+    )
+    if res.returncode != 0:
+        print_error(
+            "NAT Reset",
             f"iptables command failed. Error information is below.\n{res.stderr}",
         )
 
