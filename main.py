@@ -22,9 +22,11 @@ VPNGATE_COUNTRY: str = "JP"
 VPNGATE_PORT: int = 443
 
 status_error_event = Event()
+is_connected = False
 
 
 def main():
+    global is_connected
     vpngateip: str = None  # 最後に接続したサーバ
     try:
         print_debug("Started.")
@@ -36,8 +38,11 @@ def main():
             vpn_connect(host)  # ベストなVPNGateサーバに接続
             ipconfig(vpngateip)  # IPアドレスを設定
             # 死活監視スレッドを実行
+            is_connected = True
             sc = Thread(target=status_check_worker, daemon=True)
             sc.start()
+            dh = Thread(target=dhcp_reobtain_worker, daemon=True)
+            dh.start()
             while sc.is_alive():
                 if status_error_event.wait(timeout=1.0):
                     status_error_event.clear()
@@ -104,21 +109,32 @@ def clean(vpngateip):
 
 
 def status_check_worker():
+    global is_connected
     print("Status check process is running.")
-    while True:
+    while is_connected:
         (valid, status) = vpn_status("Session Status")
         if valid and status == "Connection Completed (Session Established)":
             time.sleep(1)
             continue
         else:
             print_error("StatusCheck", "Connection error detected.", False)
+            is_connected = False
             status_error_event.set()
             time.sleep(1)  # イベント発火を確実にさせる起こすため念のため
             return
 
 
-def ipconfig(vpngateip: str):
-    # DHCPにてIP取得
+def dhcp_reobtain_worker():
+    counter: int = 0
+    while is_connected:
+        time.sleep(1)
+        counter += 1
+        if counter > 300:
+            counter = 0
+            dhcp(False)
+
+
+def dhcp(err_exit: bool = True) -> (str, str):
     print("Obtaining IP Address from vpngate server...")
     open("lease.txt", "w").close()  # lease情報の保存先を作成
     res = runcmd(
@@ -126,8 +142,11 @@ def ipconfig(vpngateip: str):
     )
     if res.returncode != 0:
         print_error(
-            "dhclient", f"dhclient failed. Error information is below.\n{res.stderr}"
+            "dhclient",
+            f"dhclient failed. Error information is below.\n{res.stderr}",
+            err_exit
         )
+        return (None, None)
     # 情報抽出
     with open("lease.txt", "r") as f:
         lease_text = f.read()
@@ -138,6 +157,12 @@ def ipconfig(vpngateip: str):
     routers = routers_match.group(1) if routers_match else None
     if fixed_address is None or routers is None:
         print_error("ParseDHCPData", "Obtained dhcp data was not valid.")
+    return (fixed_address, routers)
+
+
+def ipconfig(vpngateip: str):
+    # DHCPにてIP取得
+    (fixed_address, routers) = dhcp()
     fixed_address += "/16"
     print(f"Obtained IP: {fixed_address}  GW:{routers}")
     # 静的経路設定
