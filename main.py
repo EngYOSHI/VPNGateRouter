@@ -55,7 +55,7 @@ def main():
                     vpn_disconnect()  # VPN切断
                     break
     except KeyboardInterrupt:
-        print_log("exitting...")
+        print_log("exiting...")
         clean(vpngateip)
 
 
@@ -115,12 +115,14 @@ def status_check_worker():
     global is_connected
     print_log("Status check process is running.")
     while is_connected:
-        (valid, status) = vpn_status("Session Status", logwrite = False)
+        (valid, status) = vpn_status("Session Status", logwrite=False)
         if valid and status == "Connection Completed (Session Established)":
             time.sleep(1)
             continue
         else:
-            print_error("StatusCheck", "Connection error detected.", False)
+            print_error(
+                "StatusCheck", "Connection error detected.", exit_after_print=False
+            )
             is_connected = False
             status_error_event.set()
             time.sleep(1)  # イベント発火を確実にさせる起こすため念のため
@@ -135,26 +137,28 @@ def dhcp_reobtain_worker():
         if counter > 300:
             counter = 0
             print_debug("Reobtaining IP Address...")
-            dhcp(False)
+            dhcp(err_exit=False, logwrite=False)
 
 
-def dhcp(err_exit: bool = True) -> (str, str):
+def dhcp(err_exit: bool = True, logwrite: bool = True) -> (str, str):
     path = Path(__file__).resolve().parent.joinpath("lease.txt")
     open(path, "w").close()  # lease情報の保存先を作成
     res = runcmd(
-        ["dhclient", "-v", "-sf", "/bin/true", "-lf", str(path), "vpn_vpngate"]
+        ["dhclient", "-v", "-sf", "/bin/true", "-lf", str(path), "vpn_vpngate"],
+        logwrite=logwrite,
     )
     if res.returncode != 0:
         print_error(
             "dhclient",
             f"dhclient failed. Error information is below.\n{res.stderr}",
-            err_exit
+            exit_after_print=err_exit,
         )
         return (None, None)
     # 情報抽出
     with open(path, "r") as f:
         lease_text = f.read()
-    print_debug(f"DHCP Lease information\n{lease_text}")
+    if logwrite:
+        print_debug(f"DHCP Lease information\n{lease_text}")
     fixed_address_match = re.search(r"fixed-address\s+([\d.]+);", lease_text)
     fixed_address = fixed_address_match.group(1) if fixed_address_match else None
     routers_match = re.search(r"option routers\s+([\d.]+);", lease_text)
@@ -278,19 +282,19 @@ def vpn_disconnect():
 
 def runcmd(command: list[str], logwrite: bool = True) -> subprocess.CompletedProcess:
     res = subprocess.run(command, check=False, capture_output=True, text=True)
-    print_debug(f"RunCMD_args: {' '.join(res.args)}", logwrite = logwrite)
-    print_debug(f"RunCMD_stdout: {res.stdout}", logwrite = logwrite)
-    print_debug(f"RunCMD_stderr: {res.stderr}", logwrite = logwrite)
+    print_debug(f"RunCMD_args: {' '.join(res.args)}", logwrite=logwrite)
+    print_debug(f"RunCMD_stdout: {res.stdout}", logwrite=logwrite)
+    print_debug(f"RunCMD_stderr: {res.stderr}", logwrite=logwrite)
     return res
 
 
 def runvpncmd(command: list[str], logwrite: bool = True) -> subprocess.CompletedProcess:
     command = ["vpncmd", "localhost", "/client", "/cmd"] + command
-    return runcmd(command, logwrite = logwrite)
+    return runcmd(command, logwrite=logwrite)
 
 
 def vpn_status(key: str, logwrite: bool = True) -> (bool, str):
-    res = runvpncmd(["accountstatusget", "vpngate"], logwrite = logwrite)
+    res = runvpncmd(["accountstatusget", "vpngate"], logwrite=logwrite)
     if errcheck_vpncmd_res(res):
         return (False, None)
     match = re.search(rf"{re.escape(key)}\s+\|(.+)", res.stdout)
@@ -315,7 +319,7 @@ def get_server_list(country: str = None, port: int = None):
                 content = s.get(CSV_URL).content.decode("utf-8")
                 break  # contentをループ外で使うため
             except Exception as e:
-                print_error("GetServerListCSV", e, False)
+                print_error("GetServerListCSV", e, exit_after_print=False)
                 time.sleep(3)
                 continue
         server_list = list(csv.reader(StringIO(content), delimiter=","))
@@ -419,7 +423,7 @@ def log_write(msg: str):
     dt = datetime.now(ZoneInfo("Asia/Tokyo"))
     path = Path(__file__).resolve().parent.joinpath(f"log/log-{dt.date()}.txt")
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, mode='a', encoding='utf-8') as f:
+    with open(path, mode="a", encoding="utf-8") as f:
         f.write(f"[{dt}] {msg}")
 
 
