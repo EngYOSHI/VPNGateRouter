@@ -9,6 +9,9 @@ from io import StringIO
 import time
 import subprocess
 from threading import Thread, Event
+from zoneinfo import ZoneInfo
+from datetime import datetime
+from pathlib import Path
 
 CSV_URL: str = "https://www.vpngate.net/api/iphone/"
 DEBUG: bool = False
@@ -47,18 +50,18 @@ def main():
                 if status_error_event.wait(timeout=1.0):
                     status_error_event.clear()
                     # 状態エラー発生のためフェイルオーバー開始
-                    print("Failover started.")
+                    print_log("Failover started.")
                     ipreset(vpngateip)  # IP設定を解除
                     vpn_disconnect()  # VPN切断
                     break
     except KeyboardInterrupt:
-        print("exitting...")
+        print_log("exitting...")
         clean(vpngateip)
 
 
 def init():
     # IPマスカレードの設定
-    print("Setting up ip masquerade...")
+    print_log("Setting up ip masquerade...")
     res = runcmd(
         [
             "iptables",
@@ -85,7 +88,7 @@ def clean(vpngateip):
     ipreset(vpngateip)  # IP設定を解除
     vpn_disconnect()  # VPN切断
     # IPマスカレードの解除
-    print("cleaning ip masquerade setting...")
+    print_log("cleaning ip masquerade setting...")
     res = runcmd(
         [
             "iptables",
@@ -110,9 +113,9 @@ def clean(vpngateip):
 
 def status_check_worker():
     global is_connected
-    print("Status check process is running.")
+    print_log("Status check process is running.")
     while is_connected:
-        (valid, status) = vpn_status("Session Status")
+        (valid, status) = vpn_status("Session Status", logwrite = False)
         if valid and status == "Connection Completed (Session Established)":
             time.sleep(1)
             continue
@@ -131,14 +134,15 @@ def dhcp_reobtain_worker():
         counter += 1
         if counter > 300:
             counter = 0
+            print_debug("Reobtaining IP Address...")
             dhcp(False)
 
 
 def dhcp(err_exit: bool = True) -> (str, str):
-    print("Obtaining IP Address from vpngate server...")
-    open("lease.txt", "w").close()  # lease情報の保存先を作成
+    path = Path(__file__).resolve().parent.joinpath("lease.txt")
+    open(path, "w").close()  # lease情報の保存先を作成
     res = runcmd(
-        ["dhclient", "-v", "-sf", "/bin/true", "-lf", "lease.txt", "vpn_vpngate"]
+        ["dhclient", "-v", "-sf", "/bin/true", "-lf", str(path), "vpn_vpngate"]
     )
     if res.returncode != 0:
         print_error(
@@ -148,7 +152,7 @@ def dhcp(err_exit: bool = True) -> (str, str):
         )
         return (None, None)
     # 情報抽出
-    with open("lease.txt", "r") as f:
+    with open(path, "r") as f:
         lease_text = f.read()
     print_debug(f"DHCP Lease information\n{lease_text}")
     fixed_address_match = re.search(r"fixed-address\s+([\d.]+);", lease_text)
@@ -162,9 +166,10 @@ def dhcp(err_exit: bool = True) -> (str, str):
 
 def ipconfig(vpngateip: str):
     # DHCPにてIP取得
+    print_log("Obtaining IP Address from vpngate server...")
     (fixed_address, routers) = dhcp()
     fixed_address += "/16"
-    print(f"Obtained IP: {fixed_address}  GW:{routers}")
+    print_log(f"Obtained IP: {fixed_address}  GW:{routers}")
     # 静的経路設定
     res = runcmd(
         ["ip", "route", "add", vpngateip, "via", IP_GATEWAY, "dev", NIC_UPSTREAM]
@@ -192,11 +197,11 @@ def ipconfig(vpngateip: str):
         print_error(
             "GetWANIP", f"curl failed. Error information is below.\n{res.stderr}"
         )
-    print(f"IP Configuration OK. WAN IP: {res.stdout}")
+    print_log(f"IP Configuration OK. WAN IP: {res.stdout}")
 
 
 def ipreset(vpngateip: str):
-    print("Resetting IP setting...")
+    print_log("Resetting IP setting...")
     # 静的経路設定解除
     res = runcmd(["ip", "route", "del", vpngateip])
     if res.returncode != 0:
@@ -214,7 +219,7 @@ def ipreset(vpngateip: str):
 
 
 def get_bestserver(last, country, port) -> str:
-    print("Getting best vpngate server...")
+    print_log("Getting best vpngate server...")
     server_list = get_server_list(country, port)
     if len(server_list) == 0:
         print_error("GetBestServer", "No server found.")
@@ -223,13 +228,13 @@ def get_bestserver(last, country, port) -> str:
         for server in server_list:
             if server.ip == last:
                 server_list.remove(server)
-    print(f"Done. Info:{server_list[0]}")
+    print_log(f"Done. Info:{server_list[0]}")
     return server_list[0].get_host()
 
 
 def vpn_connect(host: str):
     # 接続情報の設定
-    print("Setting vpngate server address...")
+    print_log("Setting vpngate server address...")
     res = runvpncmd(["accountset", "vpngate", f"/server:{host}", "/hub:vpngate"])
     if errcheck_vpncmd_res(res):
         print_error(
@@ -237,7 +242,7 @@ def vpn_connect(host: str):
             f"Accountset command failed. Error information is below.\n{res.stdout}",
         )
     # 接続
-    print("Connecting to vpngate server...")
+    print_log("Connecting to vpngate server...")
     res = runvpncmd(["accountconnect", "vpngate"])
     if errcheck_vpncmd_res(res):
         print_error(
@@ -245,7 +250,7 @@ def vpn_connect(host: str):
             f"Connect command failed. Error information is below.\n{res.stdout}",
         )
     # 接続状況確認
-    print("Checking connection...")
+    print_log("Checking connection...")
     while True:
         (valid, status) = vpn_status("Session Status")
         if valid and status == "Connection Completed (Session Established)":
@@ -255,7 +260,7 @@ def vpn_connect(host: str):
 
 def vpn_disconnect():
     # 切断
-    print("Disconnecting from vpngate server...")
+    print_log("Disconnecting from vpngate server...")
     res = runvpncmd(["accountdisconnect", "vpngate"])
     if errcheck_vpncmd_res(res):
         print_error(
@@ -263,7 +268,7 @@ def vpn_disconnect():
             f"Disconnect command failed. Error information is below.\n{res.stdout}",
         )
     # 接続状況確認
-    print("Checking connection...")
+    print_log("Checking connection...")
     while True:
         (valid, status) = vpn_status("Session Status")
         if not valid:
@@ -271,21 +276,21 @@ def vpn_disconnect():
         time.sleep(1)
 
 
-def runcmd(command: list[str]) -> subprocess.CompletedProcess:
+def runcmd(command: list[str], logwrite: bool = True) -> subprocess.CompletedProcess:
     res = subprocess.run(command, check=False, capture_output=True, text=True)
-    print_debug(f"RunCMD_args: {' '.join(res.args)}")
-    print_debug(f"RunCMD_stdout: {res.stdout}")
-    print_debug(f"RunCMD_stderr: {res.stderr}")
+    print_debug(f"RunCMD_args: {' '.join(res.args)}", logwrite = logwrite)
+    print_debug(f"RunCMD_stdout: {res.stdout}", logwrite = logwrite)
+    print_debug(f"RunCMD_stderr: {res.stderr}", logwrite = logwrite)
     return res
 
 
-def runvpncmd(command: list[str]) -> subprocess.CompletedProcess:
+def runvpncmd(command: list[str], logwrite: bool = True) -> subprocess.CompletedProcess:
     command = ["vpncmd", "localhost", "/client", "/cmd"] + command
-    return runcmd(command)
+    return runcmd(command, logwrite = logwrite)
 
 
-def vpn_status(key: str) -> (bool, str):
-    res = runvpncmd(["accountstatusget", "vpngate"])
+def vpn_status(key: str, logwrite: bool = True) -> (bool, str):
+    res = runvpncmd(["accountstatusget", "vpngate"], logwrite = logwrite)
     if errcheck_vpncmd_res(res):
         return (False, None)
     match = re.search(rf"{re.escape(key)}\s+\|(.+)", res.stdout)
@@ -310,7 +315,7 @@ def get_server_list(country: str = None, port: int = None):
                 content = s.get(CSV_URL).content.decode("utf-8")
                 break  # contentをループ外で使うため
             except Exception as e:
-                print_error("GetServerListCSV", e)
+                print_error("GetServerListCSV", e, False)
                 time.sleep(3)
                 continue
         server_list = list(csv.reader(StringIO(content), delimiter=","))
@@ -410,16 +415,35 @@ class ServerConnectInfo:
         return f"{self.hostname}: {self.ip}:{self.port} ({self.country}) Score:{self.score} Ping:{self.ping}ms {self.get_speed()}"
 
 
-def print_debug(msg, banner=True, end="\n"):
+def log_write(msg: str):
+    dt = datetime.now(ZoneInfo("Asia/Tokyo"))
+    path = Path(__file__).resolve().parent.joinpath(f"log/log-{dt.date()}.txt")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, mode='a', encoding='utf-8') as f:
+        f.write(f"[{dt}] {msg}")
+
+
+def print_log(msg: str):
+    if DEBUG:
+        print(f"\033[32m{str(msg)}\033[0m")
+    else:
+        print(str(msg))
+    log_write(f"{str(msg)}\n")
+
+
+def print_debug(msg, banner=True, end="\n", logwrite: bool = True):
     if DEBUG:
         if banner:
             print("\033[45m(DEBUG)\033[0m " + str(msg), end=end)
         else:
             print(str(msg), end=end)
+    if logwrite:
+        log_write(f"[DEBUG] {str(msg)}\n")
 
 
 def print_error(errtype, errmsg, exit_after_print: bool = True):
-    print("\033[31m" + str(errtype) + ": " + str(errmsg) + "\033[0m")
+    print(f"\033[31m{str(errtype)}: {str(errmsg)}\033[0m")
+    log_write(f"[ERROR] {str(errtype)}: {str(errmsg)}\n")
     if exit_after_print:
         exit(1)
 
