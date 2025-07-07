@@ -8,6 +8,7 @@ import re
 from io import StringIO
 import time
 import subprocess
+from threading import Thread, Event
 
 CSV_URL: str = "https://www.vpngate.net/api/iphone/"
 DEBUG: bool = False
@@ -20,16 +21,34 @@ VPNGATE_FIX: str = None  # "118.106.1.118:1496"
 VPNGATE_COUNTRY: str = "JP"
 VPNGATE_PORT: int = 443
 
+status_error_event = Event()
+
 
 def main():
-    print_debug("Started.")
-    init()  # 初期設定
-    host = get_bestserver(
-        VPNGATE_COUNTRY, VPNGATE_PORT
-    )  # ベストなVPNGateのサーバ情報を取得
-    vpngateip = host.split(":")[0]  # IPアドレス部分を抽出
-    vpn_connect(host)  # ベストなVPNGateサーバに接続
-    ipconfig(vpngateip)  # IPアドレスを設定
+    last: str = None  # 最後に接続したサーバ
+    try:
+        print_debug("Started.")
+        init()  # 初期設定
+        while True:
+            # ベストなVPNGateのサーバ情報を取得
+            host = get_bestserver(last, VPNGATE_COUNTRY, VPNGATE_PORT)
+            vpngateip = host.split(":")[0]  # IPアドレス部分を抽出
+            last = vpngateip
+            vpn_connect(host)  # ベストなVPNGateサーバに接続
+            ipconfig(vpngateip)  # IPアドレスを設定
+            # 死活監視スレッドを実行
+            sc = Thread(target=status_check_worker, daemon=True)
+            sc.start()
+            while sc.is_alive():
+                if status_error_event.wait(timeout=1.0):
+                    status_error_event.clear()
+                    # 状態エラー発生のためフェイルオーバー開始
+                    print("Failover started.")
+                    ipreset(vpngateip)  # IP設定を解除
+                    vpn_disconnect()  # VPN切断
+                    break
+    except KeyboardInterrupt:
+        print("exitting...")
 
 
 def init():
@@ -55,6 +74,20 @@ def init():
             "NAT Config",
             f"iptables command failed. Error information is below.\n{res.stderr}",
         )
+
+
+def status_check_worker():
+    print("Status check process is running.")
+    while True:
+        (valid, status) = vpn_status("Session Status")
+        if valid and status == "Connection Completed (Session Established)":
+            time.sleep(1)
+            continue
+        else:
+            print_error("StatusCheck", "Connection error detected.", False)
+            status_error_event.set()
+            time.sleep(1)  # イベント発火を確実にさせる起こすため念のため
+            return
 
 
 def ipconfig(vpngateip: str):
@@ -110,11 +143,34 @@ def ipconfig(vpngateip: str):
     print(f"IP Configuration OK. WAN IP: {res.stdout}")
 
 
-def get_bestserver(country, port) -> str:
+def ipreset(vpngateip: str):
+    print("Resetting IP setting...")
+    # 静的経路設定解除
+    res = runcmd(["ip", "route", "del", vpngateip])
+    if res.returncode != 0:
+        print_error(
+            "IP Route Del",
+            f"ip route del failed. Error information is below.\n{res.stderr}",
+        )
+    # IP解放
+    res = runcmd(["ip", "addr", "flush", "dev", NIC_VPNGATE])
+    if res.returncode != 0:
+        print_error(
+            "IP Addr Flush",
+            f"ip addr flush failed. Error information is below.\n{res.stderr}",
+        )
+
+
+def get_bestserver(last, country, port) -> str:
     print("Getting best vpngate server...")
     server_list = get_server_list(country, port)
     if len(server_list) == 0:
         print_error("GetBestServer", "No server found.")
+    if last is not None:
+        # 最後に接続していたサーバは除外
+        for server in server_list:
+            if server.ip == last:
+                server_list.remove(server)
     print(f"Done. Info:{server_list[0]}")
     return server_list[0].get_host()
 
@@ -143,7 +199,24 @@ def vpn_connect(host: str):
         if valid and status == "Connection Completed (Session Established)":
             break
         time.sleep(1)
-    print("Connection process done.")
+
+
+def vpn_disconnect():
+    # 切断
+    print("Disconnecting from vpngate server...")
+    res = runvpncmd(["accountdisconnect", "vpngate"])
+    if errcheck_vpncmd_res(res):
+        print_error(
+            "VPNCMD_Disconnect",
+            f"Disconnect command failed. Error information is below.\n{res.stdout}",
+        )
+    # 接続状況確認
+    print("Checking connection...")
+    while True:
+        (valid, status) = vpn_status("Session Status")
+        if not valid:
+            break
+        time.sleep(1)
 
 
 def runcmd(command: list[str]) -> subprocess.CompletedProcess:
