@@ -22,7 +22,7 @@ NIC_VPN: str = "br_eth1"
 NIC_VPNGATE: str = "vpn_vpngate"
 VPNGATE_FIX: str = None  # "118.106.1.118:1496"
 VPNGATE_COUNTRY: str = "JP"
-VPNGATE_PORT: int = 443
+VPNGATE_PORT: int = None
 
 status_error_event = Event()
 is_connected = False
@@ -137,35 +137,39 @@ def dhcp_reobtain_worker():
         if counter > 300:
             counter = 0
             print_debug("Reobtaining IP Address...")
-            dhcp(err_exit=False, logwrite=False)
+            dhcp(loop=False, logwrite=False)
 
 
-def dhcp(err_exit: bool = True, logwrite: bool = True) -> (str, str):
-    path = Path(__file__).resolve().parent.joinpath("lease.txt")
-    open(path, "w").close()  # lease情報の保存先を作成
-    res = runcmd(
-        ["dhclient", "-v", "-sf", "/bin/true", "-lf", str(path), "vpn_vpngate"],
-        logwrite=logwrite,
-    )
-    if res.returncode != 0:
-        print_error(
-            "dhclient",
-            f"dhclient failed. Error information is below.\n{res.stderr}",
-            exit_after_print=err_exit,
+def dhcp(loop: bool = True, logwrite: bool = True) -> (str, str):
+    while True:
+        path = Path(__file__).resolve().parent.joinpath("lease.txt")
+        open(path, "w").close()  # lease情報の保存先を作成
+        res = runcmd(
+            ["dhclient", "-v", "-sf", "/bin/true", "-lf", str(path), "vpn_vpngate"],
+            logwrite=logwrite,
         )
-        return (None, None)
-    # 情報抽出
-    with open(path, "r") as f:
-        lease_text = f.read()
-    if logwrite:
-        print_debug(f"DHCP Lease information\n{lease_text}")
-    fixed_address_match = re.search(r"fixed-address\s+([\d.]+);", lease_text)
-    fixed_address = fixed_address_match.group(1) if fixed_address_match else None
-    routers_match = re.search(r"option routers\s+([\d.]+);", lease_text)
-    routers = routers_match.group(1) if routers_match else None
-    if fixed_address is None or routers is None:
-        print_error("ParseDHCPData", "Obtained dhcp data was not valid.")
-    return (fixed_address, routers)
+        if res.returncode != 0:
+            # NIC指定エラーや構文エラーなどはreturncodeが1
+            # DHCP取得エラーはreturncodeが0なのでキャッチできない
+            print_error(
+                "dhclient",
+                f"dhclient failed. Error information is below.\n{res.stderr}"
+            )
+            return (None, None)
+        # 情報抽出
+        with open(path, "r") as f:
+            lease_text = f.read()
+        if logwrite:
+            print_debug(f"DHCP Lease information\n{lease_text}")
+        fixed_address_match = re.search(r"fixed-address\s+([\d.]+);", lease_text)
+        fixed_address = fixed_address_match.group(1) if fixed_address_match else None
+        routers_match = re.search(r"option routers\s+([\d.]+);", lease_text)
+        routers = routers_match.group(1) if routers_match else None
+        if fixed_address is None or routers is None:
+            print_error("ParseDHCPData", "Obtained dhcp data was not valid.")
+            if loop:
+                continue
+        return (fixed_address, routers)
 
 
 def ipconfig(vpngateip: str):
@@ -281,8 +285,8 @@ def vpn_disconnect():
 
 
 def runcmd(command: list[str], logwrite: bool = True) -> subprocess.CompletedProcess:
+    print_debug(f"RunCMD_args: {' '.join(command)}", logwrite=logwrite)
     res = subprocess.run(command, check=False, capture_output=True, text=True)
-    print_debug(f"RunCMD_args: {' '.join(res.args)}", logwrite=logwrite)
     print_debug(f"RunCMD_stdout: {res.stdout}", logwrite=logwrite)
     print_debug(f"RunCMD_stderr: {res.stderr}", logwrite=logwrite)
     return res
@@ -449,6 +453,7 @@ def print_error(errtype, errmsg, exit_after_print: bool = True):
     print(f"\033[31m{str(errtype)}: {str(errmsg)}\033[0m")
     log_write(f"[ERROR] {str(errtype)}: {str(errmsg)}\n")
     if exit_after_print:
+        print(f"\033[31mTerminating due to error...\033[0m")
         exit(1)
 
 
