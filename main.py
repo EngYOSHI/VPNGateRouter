@@ -16,7 +16,6 @@ from pathlib import Path
 CSV_URL: str = "https://www.vpngate.net/api/iphone/"
 DEBUG: bool = False
 IP_LOCAL: str = "192.168.19.0/24"
-IP_GATEWAY: str = "10.0.10.254"
 NIC_UPSTREAM: str = "eth0"
 NIC_VPN: str = "br_eth1"
 NIC_VPNGATE: str = "vpn_vpngate"
@@ -111,6 +110,24 @@ def clean(vpngateip):
         )
 
 
+def get_gw(nic: str):
+    res = runcmd(
+        ["ip", "route", "show", "default", "dev", str(nic)]
+    )
+    match = re.search(r"default via (\d+\.\d+\.\d+\.\d+)", res.stdout)
+    if match:
+        gateway_ip = match.group(1)
+        print_log(f"Gateway address of {nic} is {gateway_ip}")
+        return gateway_ip
+    else:
+        # 結果が空：NICが存在しない，あるいはデフォルトルートがない場合が該当する
+        # 結果がエラー：構文エラー(NIC指定が空白になっているなど)
+        print_error(
+            "GetGwAddr",
+            f"NIC:{nic} is not found, or have no ip address."
+        )
+
+
 def status_check_worker():
     global is_connected
     print_log("Status check process is running.")
@@ -178,9 +195,11 @@ def ipconfig(vpngateip: str):
     (fixed_address, routers) = dhcp()
     fixed_address += "/16"
     print_log(f"Obtained IP: {fixed_address}  GW:{routers}")
+    # 上流NICのゲートウェイアドレス取得
+    gateway_ip = get_gw(NIC_UPSTREAM)
     # 静的経路設定
     res = runcmd(
-        ["ip", "route", "add", vpngateip, "via", IP_GATEWAY, "dev", NIC_UPSTREAM]
+        ["ip", "route", "add", vpngateip, "via", gateway_ip, "dev", NIC_UPSTREAM]
     )
     if res.returncode != 0:
         print_error(
