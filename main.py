@@ -53,6 +53,9 @@ def main():
                     ipreset(vpngateip)  # IP設定を解除
                     vpn_disconnect()  # VPN切断
                     break
+    except FatalErrException:
+        clean(vpngateip)
+        err_exit()
     except KeyboardInterrupt:
         print_log("exiting...")
         clean(vpngateip)
@@ -77,13 +80,20 @@ def init():
         ]
     )
     if res.returncode != 0:
+        # IPアドレスの指定形式がおかしいなどの構文エラーの場合2
+        # 存在しないNIC指定では正常終了
+        # 通常発生し得ない
         print_error(
             "NAT Config",
             f"iptables command failed. Error information is below.\n{res.stderr}",
         )
+        raise FatalErrException()
 
 
 def clean(vpngateip):
+    if vpngateip is None:
+        # Init()の段階でコケた場合，復旧処理不要
+        return
     ipreset(vpngateip)  # IP設定を解除
     vpn_disconnect()  # VPN切断
     # IPマスカレードの解除
@@ -122,10 +132,12 @@ def get_gw(nic: str):
     else:
         # 結果が空：NICが存在しない，あるいはデフォルトルートがない場合が該当する
         # 結果がエラー：構文エラー(NIC指定が空白になっているなど)
+        # 発生したらプログラムを続行すべきでない
         print_error(
             "GetGwAddr",
             f"NIC:{nic} is not found, or have no ip address."
         )
+        raise FatalErrException()
 
 
 def status_check_worker():
@@ -138,7 +150,7 @@ def status_check_worker():
             continue
         else:
             print_error(
-                "StatusCheck", "Connection error detected.", exit_after_print=False
+                "StatusCheck", "Connection error detected."
             )
             is_connected = False
             status_error_event.set()
@@ -202,10 +214,14 @@ def ipconfig(vpngateip: str):
         ["ip", "route", "add", vpngateip, "via", gateway_ip, "dev", NIC_UPSTREAM]
     )
     if res.returncode != 0:
+        # NIC_UPSTREAMが存在しない場合, gateway_ipやvpngateipが異常の場合1
+        # gateway_ipがNexthopとして不適切，すでにvpngateipに対するルートが存在する場合2
+        # 発生したらプログラムを続行すべきでない
         print_error(
             "IP Route Add",
             f"ip route add failed. Error information is below.\n{res.stderr}",
         )
+        raise FatalErrException()
     # IP設定
     res = runcmd(["ip", "addr", "add", fixed_address, "dev", NIC_VPNGATE])
     if res.returncode != 0:
@@ -213,12 +229,14 @@ def ipconfig(vpngateip: str):
             "IP Addr Add",
             f"ip addr add failed. Error information is below.\n{res.stderr}",
         )
+        raise FatalErrException()
     res = runcmd(["ip", "route", "add", "default", "via", routers, "dev", NIC_VPNGATE])
     if res.returncode != 0:
         print_error(
             "IP Route Add Default",
             f"ip addr add default failed. Error information is below.\n{res.stderr}",
         )
+        raise FatalErrException()
     res = runcmd(["curl", "inet-ip.info"])
     if res.returncode != 0:
         print_error(
@@ -250,6 +268,9 @@ def get_bestserver(last, country, port) -> str:
     server_list = get_server_list(country, port)
     if len(server_list) == 0:
         print_error("GetBestServer", "No server found.")
+        # 利用可能なサーバが一つも存在しない場合，フィルタが過剰になりすぎている
+        # プログラムを続行すべきでない
+        raise FatalErrException()
     if last is not None:
         # 最後に接続していたサーバは除外
         for server in server_list:
@@ -268,6 +289,7 @@ def vpn_connect(host: str):
             "VPNCMD_Set",
             f"Accountset command failed. Error information is below.\n{res.stdout}",
         )
+        raise FatalErrException()
     # 接続
     print_log("Connecting to vpngate server...")
     res = runvpncmd(["accountconnect", "vpngate"])
@@ -276,6 +298,7 @@ def vpn_connect(host: str):
             "VPNCMD_Connect",
             f"Connect command failed. Error information is below.\n{res.stdout}",
         )
+        raise FatalErrException()
     # 接続状況確認
     print_log("Checking connection...")
     while True:
@@ -342,7 +365,7 @@ def get_server_list(country: str = None, port: int = None):
                 content = s.get(CSV_URL).content.decode("utf-8")
                 break  # contentをループ外で使うため
             except Exception as e:
-                print_error("GetServerListCSV", e, exit_after_print=False)
+                print_error("GetServerListCSV", e)
                 time.sleep(3)
                 continue
         server_list = list(csv.reader(StringIO(content), delimiter=","))
@@ -468,17 +491,24 @@ def print_debug(msg, banner=True, end="\n", logwrite: bool = True):
         log_write(f"[DEBUG] {str(msg)}\n")
 
 
-def print_error(errtype, errmsg, exit_after_print: bool = True):
+def print_error(errtype, errmsg):
     print(f"\033[31m{str(errtype)}: {str(errmsg)}\033[0m")
     log_write(f"[ERROR] {str(errtype)}: {str(errmsg)}\n")
-    if exit_after_print:
-        print(f"\033[31mTerminating due to error...\033[0m")
-        exit(1)
+
+
+def err_exit():
+    print(f"\033[31mTerminating due to error...\033[0m")
+    os._exit(1)
 
 
 def chkroot():
     if os.geteuid() != 0 or os.getuid() != 0:
         print_error("chkroot", "Run As Root!!!")
+        err_exit()
+
+
+class FatalErrException(Exception):
+    pass
 
 
 if __name__ == "__main__":
