@@ -29,18 +29,26 @@ is_connected = False
 
 def main():
     global is_connected
-    vpngateip: str = None  # 最後に接続したサーバ
+    vpngateip_list: list[str] = []  # 最後に接続したサーバ
     try:
         print_debug("Started.")
         init()  # 初期設定
         while True:
             # ベストなVPNGateのサーバ情報を取得
-            host = get_bestserver(vpngateip, VPNGATE_COUNTRY, VPNGATE_PORT)
-            vpngateip = host.split(":")[0]  # IPアドレス部分を抽出
-            vpn_connect(host)  # ベストなVPNGateサーバに接続
-            ipconfig(vpngateip)  # IPアドレスを設定
+            host = get_bestserver(vpngateip_list, VPNGATE_COUNTRY, VPNGATE_PORT)
+            vpngateip_list.append(host.split(":")[0])  # IPアドレス部分を抽出
+            connect_res = vpn_connect(host)  # ベストなVPNGateサーバに接続
+            if not connect_res:
+                print_error("VPNConnect", "Could not complete connecting to vpngate server.")
+                # 接続失敗時，クリーンして再実行
+                vpn_disconnect()
+                print_debug(f"Bad servers: {vpngateip_list}")
+                continue
+            ipconfig(vpngateip_list[-1])  # IPアドレスを設定
             # 死活監視スレッドを実行
             is_connected = True
+            # 接続成功したので，リストを現在接続している中継サーバのみとする
+            vpngateip_list = [vpngateip_list[-1]]
             sc = Thread(target=status_check_worker, daemon=True)
             sc.start()
             dh = Thread(target=dhcp_reobtain_worker, daemon=True)
@@ -50,15 +58,15 @@ def main():
                     status_error_event.clear()
                     # 状態エラー発生のためフェイルオーバー開始
                     print_log("Failover started.")
-                    ipreset(vpngateip)  # IP設定を解除
+                    ipreset(vpngateip_list[-1])  # IP設定を解除
                     vpn_disconnect()  # VPN切断
                     break
     except FatalErrException:
-        clean(vpngateip)
+        clean(vpngateip_list[-1])
         err_exit()
     except KeyboardInterrupt:
         print_log("exiting...")
-        clean(vpngateip)
+        clean(vpngateip_list[-1])
         print_log("Ready to exit. BYE!")
 
 
@@ -94,13 +102,10 @@ def init():
 def clean(vpngateip):
     global is_connected
     is_connected = False
-    if vpngateip is None:
-        # Init()の段階でコケた場合，復旧処理不要
-        return
     ipreset(vpngateip)  # IP設定を解除
     vpn_disconnect()  # VPN切断
     # IPマスカレードの解除
-    print_log("cleaning ip masquerade setting...")
+    print_log("Cleaning ip masquerade setting...")
     res = runcmd(
         [
             "iptables",
@@ -266,19 +271,17 @@ def ipreset(vpngateip: str):
         )
 
 
-def get_bestserver(last, country, port) -> str:
+def get_bestserver(vpngateip_list: list[str], country: str, port: int) -> str:
     print_log("Getting best vpngate server...")
     server_list = get_server_list(country, port)
+    if len(vpngateip_list) != 0:
+        # 最後に接続していたサーバと接続失敗サーバは除外
+        server_list[:] = [server for server in server_list if server.ip not in vpngateip_list]
     if len(server_list) == 0:
         print_error("GetBestServer", "No server found.")
-        # 利用可能なサーバが一つも存在しない場合，フィルタが過剰になりすぎている
+        # 利用可能なサーバが一つも存在しない場合
         # プログラムを続行すべきでない
         raise FatalErrException()
-    if last is not None:
-        # 最後に接続していたサーバは除外
-        for server in server_list:
-            if server.ip == last:
-                server_list.remove(server)
     print_log(f"Done. Info:{server_list[0]}")
     return server_list[0].get_host()
 
@@ -303,12 +306,18 @@ def vpn_connect(host: str):
         )
         raise FatalErrException()
     # 接続状況確認
-    print_log("Checking connection...")
+    retry = 0
     while True:
+        retry += 1
+        print_log(f"Checking connection... Try:{retry}")
         (valid, status) = vpn_status("Session Status")
         if valid and status == "Connection Completed (Session Established)":
+            return True  # 接続成功
+        elif retry >= 5:
             break
-        time.sleep(1)
+        else:
+            time.sleep(1)
+    return False  # 接続失敗
 
 
 def vpn_disconnect():
