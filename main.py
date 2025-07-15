@@ -92,6 +92,8 @@ def init():
 
 
 def clean(vpngateip):
+    global is_connected
+    is_connected = False
     if vpngateip is None:
         # Init()の段階でコケた場合，復旧処理不要
         return
