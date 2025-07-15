@@ -59,6 +59,7 @@ def main():
     except KeyboardInterrupt:
         print_log("exiting...")
         clean(vpngateip)
+        print_log("Ready to exit. BYE!")
 
 
 def init():
@@ -447,7 +448,7 @@ class ServerConnectInfo:
         self.operator = operator
 
     def get_speed(self):
-        unit = ["B", "KB", "MB", "GB", "TB", "PB"]
+        unit = ["bps", "kbps", "Mbps", "Gbps", "Tbps", "Pbps"]
         index_unit = 0
         speed = int(self.speed)
         while True:
@@ -456,7 +457,7 @@ class ServerConnectInfo:
                 speed /= 1000
             else:
                 break
-        return f"{speed:.2f}{unit[index_unit]}/s"
+        return f"{speed:.2f}{unit[index_unit]}"
 
     def get_host(self):
         return f"{self.ip}:{self.port}"
