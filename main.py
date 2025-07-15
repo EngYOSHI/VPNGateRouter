@@ -10,7 +10,7 @@ import time
 import subprocess
 from threading import Thread, Event
 from zoneinfo import ZoneInfo
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 CSV_URL: str = "https://www.vpngate.net/api/iphone/"
@@ -377,19 +377,17 @@ def get_server_list(country: str = None, port: int = None):
         server_list = server_list[2:-1]  # 1,2行目と最終行は不要な情報
         print_debug("▼ServerList")
         for s in server_list:
-            # hostname, ip, port, score, ping, speed,
-            # country, num_vpn_sessions, uptime, operator
             sinfo = ServerConnectInfo(
-                s[0],
-                s[1],
-                get_port_from_openvpn(s[14]),
-                s[2],
-                s[3],
-                s[4],
-                s[6],
-                s[7],
-                s[8],
-                s[12],
+                s[0],  # hostname
+                s[1],  # ip
+                get_port_from_openvpn(s[14]),  # port
+                str2int(s[2]),  # score
+                str2int(s[3]),  # ping
+                str2int(s[4]),  # speed
+                s[6],  # country
+                str2int(s[7]),  # num_vpn_sessions
+                str2int(s[8]),  # uptime
+                s[12],  # operator
             )
             if country is not None and sinfo.country != country:
                 continue
@@ -399,6 +397,16 @@ def get_server_list(country: str = None, port: int = None):
             print_debug(repr(sinfo), False)
         res.sort(key=lambda x: x.score)
         return res
+
+
+def str2int(s: str) -> int:
+    if s == '-':
+        return None
+    try:
+        return int(s)
+    except Exception as e:
+        print_error("str2int", e.message)
+        FatalErrException()
 
 
 def get_port_from_openvpn(base64str):
@@ -450,7 +458,7 @@ class ServerConnectInfo:
     def get_speed(self):
         unit = ["bps", "kbps", "Mbps", "Gbps", "Tbps", "Pbps"]
         index_unit = 0
-        speed = int(self.speed)
+        speed = self.speed
         while True:
             if speed >= 1000:
                 index_unit += 1
@@ -459,11 +467,23 @@ class ServerConnectInfo:
                 break
         return f"{speed:.2f}{unit[index_unit]}"
 
+    def get_uptime(self):
+        td = timedelta(seconds=self.uptime)
+        m, s = divmod(td.seconds, 60)
+        h, m = divmod(m, 60)
+        return f"{td.days}d,{h}:{m}:{s}"
+
+    def get_ping(self):
+        if self.ping is None:
+            return "--"
+        else:
+            return str(self.ping)
+
     def get_host(self):
         return f"{self.ip}:{self.port}"
 
     def __repr__(self):
-        return f"{self.hostname}: {self.ip}:{self.port} ({self.country}) Score:{self.score} Ping:{self.ping}ms {self.get_speed()}"
+        return f"{self.hostname} {self.get_host()} ({self.country}) Score:{self.score} Ping:{self.get_ping()}ms Speed:{self.get_speed()} Sessions:{self.num_vpn_sessions} UP:{self.get_uptime()} OP:{self.operator}"
 
 
 def log_write(msg: str):
@@ -498,7 +518,7 @@ def print_error(errtype, errmsg):
 
 
 def err_exit():
-    print(f"\033[31mTerminating due to error...\033[0m")
+    print_log("Terminating due to error...")
     os._exit(1)
 
 
