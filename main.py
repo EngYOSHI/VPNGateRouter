@@ -160,12 +160,13 @@ def status_check_worker():
             time.sleep(1)
             continue
         else:
-            print_error(
-                "StatusCheck", "Connection error detected."
-            )
-            is_connected = False
-            status_error_event.set()
-            time.sleep(1)  # イベント発火を確実にさせる起こすため念のため
+            if is_connected:
+                print_error(
+                    "StatusCheck", "Connection error detected."
+                )
+                is_connected = False
+                status_error_event.set()
+                time.sleep(1)  # イベント発火を確実にさせる起こすため念のため
             return
 
 
