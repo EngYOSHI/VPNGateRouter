@@ -406,7 +406,7 @@ def get_server_list(country: str = None, port: int = None):
                 continue
             res.append(sinfo)
             print_debug(repr(sinfo), False)
-        res.sort(key=lambda x: x.score)
+        res.sort(key=lambda x: x.score, reverse=True)
         return res
 
 
