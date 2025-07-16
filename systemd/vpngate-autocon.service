@@ -1,0 +1,12 @@
+[Unit]
+Description=Automatic configure vpngate
+After=network.target
+After=isc-kea-dhcp4-server.service
+
+[Service]
+User=root
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/screen -S vpngate -m -d /home/yoshi/vpngate/venv/bin/python /home/yoshi/vpngate/main.py
+[Install]
+WantedBy=multi-user.target
