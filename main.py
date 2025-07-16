@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.11
 
+import sys
 import os
 import csv
 import requests
@@ -25,6 +26,7 @@ VPNGATE_PORT: int = None
 
 status_error_event = Event()
 is_connected = False
+is_overwrite_active = False
 
 
 def main():
@@ -152,8 +154,9 @@ def status_check_worker():
     global is_connected
     print_log("Status check process is running.")
     while is_connected:
-        (valid, status) = vpn_status("Session Status", logwrite=False)
+        (valid, status, s) = vpn_status("Session Status", log_disp_out=False)
         if valid and status == "Connection Completed (Session Established)":
+            show_status(s)
             time.sleep(1)
             continue
         else:
@@ -166,6 +169,29 @@ def status_check_worker():
             return
 
 
+def show_status(s: str):
+    match1 = re.search(r"Outgoing Data Size\s+\|([\d,]+) bytes", s)
+    match2 = re.search(r"Incoming Data Size\s+\|([\d,]+) bytes", s)
+    if match1 and match2:
+        unit = ["bytes", "KB", "MB", "GB", "TB"]
+        dout = conv_datasize(int(match1.group(1).replace(',', '')), unit)
+        din = conv_datasize(int(match2.group(1).replace(',', '')), unit)
+        print_status(f"DL:{din}  UP:{dout}")
+    else:
+        print_error("StatusCheck", "Failed to parse data size.")
+
+
+def conv_datasize(i: int, unit: list[str]) -> str:
+    index_unit = 0
+    while index_unit < len(unit) - 1:
+        if i >= 1000:
+            index_unit += 1
+            i /= 1000
+        else:
+            break
+    return f"{i:.2f}{unit[index_unit]}"
+
+
 def dhcp_reobtain_worker():
     counter: int = 0
     while is_connected:
@@ -174,16 +200,16 @@ def dhcp_reobtain_worker():
         if counter > 300:
             counter = 0
             print_debug("Reobtaining IP Address...")
-            dhcp(loop=False, logwrite=False)
+            dhcp(loop=False, log_disp_out=False)
 
 
-def dhcp(loop: bool = True, logwrite: bool = True) -> (str, str):
+def dhcp(loop: bool = True, log_disp_out: bool = True) -> (str, str):
     while True:
         path = Path(__file__).resolve().parent.joinpath("lease.txt")
         open(path, "w").close()  # lease情報の保存先を作成
         res = runcmd(
             ["dhclient", "-v", "-sf", "/bin/true", "-lf", str(path), "vpn_vpngate"],
-            logwrite=logwrite,
+            log_disp_out=log_disp_out
         )
         if res.returncode != 0:
             # NIC指定エラーや構文エラーなどはreturncodeが1
@@ -196,7 +222,7 @@ def dhcp(loop: bool = True, logwrite: bool = True) -> (str, str):
         # 情報抽出
         with open(path, "r") as f:
             lease_text = f.read()
-        if logwrite:
+        if log_disp_out:
             print_debug(f"DHCP Lease information\n{lease_text}")
         fixed_address_match = re.search(r"fixed-address\s+([\d.]+);", lease_text)
         fixed_address = fixed_address_match.group(1) if fixed_address_match else None
@@ -310,7 +336,7 @@ def vpn_connect(host: str):
     while True:
         retry += 1
         print_log(f"Checking connection... Try:{retry}")
-        (valid, status) = vpn_status("Session Status")
+        (valid, status, _) = vpn_status("Session Status")
         if valid and status == "Connection Completed (Session Established)":
             return True  # 接続成功
         elif retry >= 5:
@@ -332,34 +358,36 @@ def vpn_disconnect():
     # 接続状況確認
     print_log("Checking connection...")
     while True:
-        (valid, status) = vpn_status("Session Status")
+        (valid, status, _) = vpn_status("Session Status")
         if not valid:
             break
         time.sleep(1)
 
 
-def runcmd(command: list[str], logwrite: bool = True) -> subprocess.CompletedProcess:
-    print_debug(f"RunCMD_args: {' '.join(command)}", logwrite=logwrite)
+def runcmd(command: list[str], log_disp_out: bool = True) -> subprocess.CompletedProcess:
+    if log_disp_out:
+        print_debug(f"RunCMD_args: {' '.join(command)}")
     res = subprocess.run(command, check=False, capture_output=True, text=True)
-    print_debug(f"RunCMD_stdout: {res.stdout}", logwrite=logwrite)
-    print_debug(f"RunCMD_stderr: {res.stderr}", logwrite=logwrite)
+    if log_disp_out:
+        print_debug(f"RunCMD_stdout: {res.stdout}")
+        print_debug(f"RunCMD_stderr: {res.stderr}")
     return res
 
 
-def runvpncmd(command: list[str], logwrite: bool = True) -> subprocess.CompletedProcess:
+def runvpncmd(command: list[str], log_disp_out: bool = True) -> subprocess.CompletedProcess:
     command = ["vpncmd", "localhost", "/client", "/cmd"] + command
-    return runcmd(command, logwrite=logwrite)
+    return runcmd(command, log_disp_out=log_disp_out)
 
 
-def vpn_status(key: str, logwrite: bool = True) -> (bool, str):
-    res = runvpncmd(["accountstatusget", "vpngate"], logwrite=logwrite)
+def vpn_status(key: str, log_disp_out: bool = True) -> (bool, str, str):
+    res = runvpncmd(["accountstatusget", "vpngate"], log_disp_out=log_disp_out)
     if errcheck_vpncmd_res(res):
-        return (False, None)
+        return (False, None, None)
     match = re.search(rf"{re.escape(key)}\s+\|(.+)", res.stdout)
     if match:
-        return (True, match.group(1).strip())
+        return (True, match.group(1).strip(), res.stdout)
     else:
-        return (False, None)
+        return (False, None, res.stdout)
 
 
 def errcheck_vpncmd_res(res: subprocess.CompletedProcess) -> bool:
@@ -405,7 +433,7 @@ def get_server_list(country: str = None, port: int = None):
             if port is not None and sinfo.port != port:
                 continue
             res.append(sinfo)
-            print_debug(repr(sinfo), False)
+            print_debug(repr(sinfo), banner=False)
         res.sort(key=lambda x: x.score, reverse=True)
         return res
 
@@ -505,7 +533,19 @@ def log_write(msg: str):
         f.write(f"[{dt}] {msg}")
 
 
+def print_status(msg: str):
+    global is_overwrite_active
+    if is_overwrite_active:
+        sys.stdout.write('\x1b[1A')  # 1行上へ
+        sys.stdout.write('\x1b[2K')  # 行をクリア
+    sys.stdout.write(msg + "\n")
+    sys.stdout.flush()
+    is_overwrite_active = True
+
+
 def print_log(msg: str):
+    global is_overwrite_active
+    is_overwrite_active = False
     if DEBUG:
         print(f"\033[32m{str(msg)}\033[0m")
     else:
@@ -513,17 +553,20 @@ def print_log(msg: str):
     log_write(f"{str(msg)}\n")
 
 
-def print_debug(msg, banner=True, end="\n", logwrite: bool = True):
+def print_debug(msg, banner=True, end="\n"):
+    global is_overwrite_active
     if DEBUG:
+        is_overwrite_active = False
         if banner:
             print("\033[45m(DEBUG)\033[0m " + str(msg), end=end)
         else:
             print(str(msg), end=end)
-    if logwrite:
-        log_write(f"[DEBUG] {str(msg)}\n")
+    log_write(f"[DEBUG] {str(msg)}\n")
 
 
 def print_error(errtype, errmsg):
+    global is_overwrite_active
+    is_overwrite_active = False
     print(f"\033[31m{str(errtype)}: {str(errmsg)}\033[0m")
     log_write(f"[ERROR] {str(errtype)}: {str(errmsg)}\n")
 
