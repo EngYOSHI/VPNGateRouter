@@ -21,6 +21,7 @@ NIC_UPSTREAM: str = "eth0"
 NIC_VPN: str = "br_eth1"
 NIC_VPNGATE: str = "vpn_vpngate"
 VPNGATE_FIX: str = None  # "118.106.1.118:1496"
+VPNGATE_EXCEPTION_BY_OP: list[str] = ["Daiyuu Nobori_ Japan. Academic Use Only."]
 VPNGATE_COUNTRY: str = "JP"
 VPNGATE_PORT: int = None
 
@@ -28,34 +29,35 @@ status_error_event = Event()
 is_connected = False
 is_overwrite_active = False
 check_point = None
+vpngate_ip_list: list[str] = []  # 切断されたサーバ
 
 
 def main():
-    set_td()
     global is_connected
-    vpngateip_list: list[str] = []  # 最後に接続したサーバ
+    global vpngate_ip_list
     try:
+        set_td()
         print_debug("Started.")
         init()  # 初期設定
         while True:
             # ベストなVPNGateのサーバ情報を取得
-            host = get_bestserver(vpngateip_list, VPNGATE_COUNTRY, VPNGATE_PORT)
-            vpngateip_list.append(host.split(":")[0])  # IPアドレス部分を抽出
+            host = get_bestserver()
+            vpngate_ip_list.append(host.split(":")[0])  # IPアドレス部分を抽出
             connect_res = vpn_connect(host)  # ベストなVPNGateサーバに接続
             if not connect_res:
                 print_error("VPNConnect", "Could not complete connecting to vpngate server.")
                 # 接続失敗時，クリーンして再実行
                 vpn_disconnect()
-                print_debug(f"Bad servers: {vpngateip_list}")
+                print_debug(f"Bad servers: {vpngate_ip_list}")
                 continue
-            ipconfig(vpngateip_list[-1])  # IPアドレスを設定
+            ipconfig(vpngate_ip_list[-1])  # IPアドレスを設定
             # 死活監視スレッドを実行
             is_connected = True
             # 実行時間を計測
             td = get_td()
             print_log(f"Connected in {td}ms")
             # 接続成功したので，リストを現在接続している中継サーバのみとする
-            vpngateip_list = [vpngateip_list[-1]]
+            vpngate_ip_list = [vpngate_ip_list[-1]]
             sc = Thread(target=status_check_worker, daemon=True)
             sc.start()
             dh = Thread(target=dhcp_reobtain_worker, daemon=True)
@@ -65,15 +67,15 @@ def main():
                     status_error_event.clear()
                     # 状態エラー発生のためフェイルオーバー開始
                     print_log("Failover started.")
-                    ipreset(vpngateip_list[-1])  # IP設定を解除
+                    ipreset(vpngate_ip_list[-1])  # IP設定を解除
                     vpn_disconnect()  # VPN切断
                     break
     except FatalErrException:
-        clean(vpngateip_list[-1])
+        clean(vpngate_ip_list[-1])
         err_exit()
     except KeyboardInterrupt:
         print_log("exiting...")
-        clean(vpngateip_list[-1])
+        clean(vpngate_ip_list[-1])
         print_log("Ready to exit. BYE!")
 
 
@@ -337,12 +339,9 @@ def ipreset(vpngateip: str):
         )
 
 
-def get_bestserver(vpngateip_list: list[str], country: str, port: int) -> str:
+def get_bestserver() -> str:
     print_log("Getting best vpngate server...")
-    server_list = get_server_list(country, port)
-    if len(vpngateip_list) != 0:
-        # 最後に接続していたサーバと接続失敗サーバは除外
-        server_list[:] = [server for server in server_list if server.ip not in vpngateip_list]
+    server_list = get_server_list()
     if len(server_list) == 0:
         print_error("GetBestServer", "No server found.")
         # 利用可能なサーバが一つも存在しない場合
@@ -436,7 +435,7 @@ def errcheck_vpncmd_res(res: subprocess.CompletedProcess) -> bool:
     return True
 
 
-def get_server_list(country: str = None, port: int = None):
+def get_server_list():
     res = []
     with requests.Session() as s:
         print_debug("Getting VPNGate server list csv.")
@@ -468,12 +467,22 @@ def get_server_list(country: str = None, port: int = None):
                 str2int(s[8]),  # uptime
                 s[12],  # operator
             )
-            if country is not None and sinfo.country != country:
-                continue
-            if port is not None and sinfo.port != port:
-                continue
-            res.append(sinfo)
-            print_debug(repr(sinfo), banner=False)
+            noadd = False
+            if VPNGATE_COUNTRY is not None and sinfo.country != VPNGATE_COUNTRY:
+                noadd = True
+            if VPNGATE_PORT is not None and sinfo.port != VPNGATE_PORT:
+                noadd = True
+            if len(VPNGATE_EXCEPTION_BY_OP) > 0 and sinfo.operator in VPNGATE_EXCEPTION_BY_OP:
+                # OPで除外リストに追加されている場合，それを除外
+                noadd = True
+            if len(vpngate_ip_list) > 0 and sinfo.ip in vpngate_ip_list:
+                # 最後に接続していたサーバと接続失敗サーバは除外
+                noadd = True
+            if noadd:
+                print_debug(f"X {repr(sinfo)}", banner=False)
+            else:
+                res.append(sinfo)
+                print_debug(f"  {repr(sinfo)}", banner=False)
         res.sort(key=lambda x: x.score, reverse=True)
         return res
 
