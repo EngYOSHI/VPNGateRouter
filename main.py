@@ -534,18 +534,6 @@ class ServerConnectInfo:
         self.uptime = uptime
         self.operator = operator
 
-    def get_speed(self):
-        unit = ["bps", "kbps", "Mbps", "Gbps", "Tbps", "Pbps"]
-        index_unit = 0
-        speed = self.speed
-        while True:
-            if speed >= 1000:
-                index_unit += 1
-                speed /= 1000
-            else:
-                break
-        return f"{speed:.2f}{unit[index_unit]}"
-
     def get_uptime(self):
         td = timedelta(seconds=self.uptime)
         m, s = divmod(td.seconds, 60)
@@ -562,7 +550,8 @@ class ServerConnectInfo:
         return f"{self.ip}:{self.port}"
 
     def __repr__(self):
-        return f"{self.hostname} {self.get_host()} ({self.country}) Score:{self.score} Ping:{self.get_ping()}ms Speed:{self.get_speed()} Sessions:{self.num_vpn_sessions} UP:{self.get_uptime()} OP:{self.operator}"
+        speed = conv_datasize(self.speed, ["bps", "kbps", "Mbps", "Gbps", "Tbps"])
+        return f"{self.hostname} {self.get_host()} ({self.country}) Score:{self.score} Ping:{self.get_ping()}ms Speed:{speed} Sessions:{self.num_vpn_sessions} UP:{self.get_uptime()} OP:{self.operator}"
 
 
 def log_write(msg: str):
