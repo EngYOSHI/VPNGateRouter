@@ -13,10 +13,10 @@ from threading import Thread, Event
 from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta
 from pathlib import Path
+import ipaddress
 
 CSV_URL: str = "https://www.vpngate.net/api/iphone/"
 DEBUG: bool = False
-IP_LOCAL: str = "192.168.19.0/24"
 NIC_UPSTREAM: str = "eth0"
 NIC_VPN: str = "br_eth1"
 NIC_VPNGATE: str = "vpn_vpngate"
@@ -80,6 +80,7 @@ def main():
 def init():
     # IPマスカレードの設定
     print_log("Setting up ip masquerade...")
+    nw_addr = get_nw(NIC_VPN)
     res = runcmd(
         [
             "iptables",
@@ -88,7 +89,7 @@ def init():
             "-A",
             "POSTROUTING",
             "-s",
-            IP_LOCAL,
+            nw_addr,
             "-o",
             NIC_VPNGATE,
             "-j",
@@ -113,6 +114,7 @@ def clean(vpngateip):
     vpn_disconnect()  # VPN切断
     # IPマスカレードの解除
     print_log("Cleaning ip masquerade setting...")
+    nw_addr = get_nw(NIC_VPN)
     res = runcmd(
         [
             "iptables",
@@ -121,7 +123,7 @@ def clean(vpngateip):
             "-D",
             "POSTROUTING",
             "-s",
-            IP_LOCAL,
+            nw_addr,
             "-o",
             NIC_VPNGATE,
             "-j",
@@ -162,6 +164,26 @@ def get_gw(nic: str):
         print_error(
             "GetGwAddr",
             f"NIC:{nic} is not found, or have no ip address."
+        )
+        raise FatalErrException()
+
+
+def get_nw(nic: str):
+    res = runcmd(
+        ["ip", "addr", "show", str(nic)]
+    )
+    match = re.search(r"inet (\d+\.\d+\.\d+\.\d+/\d+)", res.stdout)
+    if match:
+        nw_addr = str(ipaddress.IPv4Network(match.group(1), strict=False))
+        print_log(f"Network address of {nic} is {nw_addr}")
+        return nw_addr
+    else:
+        # 存在しないNICを指定するとエラーメッセージ
+        # 結果がエラー：構文エラー(NIC指定が空白になっているなど)
+        # 発生したらプログラムを続行すべきでない
+        print_error(
+            "GetNwAddr",
+            f"Could not get NW address of NIC:{nic}"
         )
         raise FatalErrException()
 
