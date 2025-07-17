@@ -10,7 +10,7 @@ import time
 from threading import Thread
 
 CHECK_URL = "http://cloudflare.com/cdn-cgi/trace"
-INTERVAL = 6
+INTERVAL = 5
 
 
 def main():
@@ -22,7 +22,8 @@ def main():
 
 def web_con_worker():
     while True:
-        web_con(CHECK_URL)
+        t = Thread(target=web_con, args=(CHECK_URL,), daemon=True)
+        t.start()
         time.sleep(INTERVAL)
 
 
