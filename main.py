@@ -27,9 +27,11 @@ VPNGATE_PORT: int = None
 status_error_event = Event()
 is_connected = False
 is_overwrite_active = False
+check_point = None
 
 
 def main():
+    set_td()
     global is_connected
     vpngateip_list: list[str] = []  # 最後に接続したサーバ
     try:
@@ -49,6 +51,9 @@ def main():
             ipconfig(vpngateip_list[-1])  # IPアドレスを設定
             # 死活監視スレッドを実行
             is_connected = True
+            # 実行時間を計測
+            td = get_td()
+            print_log(f"Connected in {td}ms")
             # 接続成功したので，リストを現在接続している中継サーバのみとする
             vpngateip_list = [vpngateip_list[-1]]
             sc = Thread(target=status_check_worker, daemon=True)
@@ -130,6 +135,17 @@ def clean(vpngateip):
         )
 
 
+def set_td():
+    global check_point
+    check_point = time.perf_counter()
+
+
+def get_td():
+    end = time.perf_counter()
+    ms = (end - check_point) * 1000
+    return f"{ms:.3f}"
+
+
 def get_gw(nic: str):
     res = runcmd(
         ["ip", "route", "show", "default", "dev", str(nic)]
@@ -161,6 +177,7 @@ def status_check_worker():
             continue
         else:
             if is_connected:
+                set_td()
                 print_error(
                     "StatusCheck", "Connection error detected."
                 )
