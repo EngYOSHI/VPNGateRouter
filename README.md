@@ -4,4 +4,5 @@
     ```
     requests==2.32.4
     tzdata==2025.2
+    dnspython==2.7.0
     ```
