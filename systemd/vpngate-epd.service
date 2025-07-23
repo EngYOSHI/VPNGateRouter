@@ -1,0 +1,11 @@
+[Unit]
+Description=Display vpngate status to e-paper
+After=vpngate-autocon.service
+
+[Service]
+User=root
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/screen -S vpngate -m -d /home/yoshi/vpngate/venv/bin/python /home/yoshi/vpngate/epd.py
+[Install]
+WantedBy=multi-user.target
