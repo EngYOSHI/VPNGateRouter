@@ -74,14 +74,14 @@ def main():
         clean(vpngate_ip_list[-1])
         err_exit()
     except KeyboardInterrupt:
-        print_log("exiting...")
+        print_log("Exiting...")
         clean(vpngate_ip_list[-1])
         print_log("Ready to exit. BYE!")
 
 
 def init():
     # IPマスカレードの設定
-    print_log("Setting up ip masquerade...")
+    print_log("Setting up IP masquerade...")
     nw_addr = get_nw(NIC_VPN)
     res = runcmd(
         [
@@ -115,7 +115,7 @@ def clean(vpngateip):
     ipreset(vpngateip)  # IP設定を解除
     vpn_disconnect()  # VPN切断
     # IPマスカレードの解除
-    print_log("Cleaning ip masquerade setting...")
+    print_log("Cleaning IP masquerade setting...")
     nw_addr = get_nw(NIC_VPN)
     res = runcmd(
         [
@@ -347,7 +347,7 @@ def get_bestserver() -> str:
         # 利用可能なサーバが一つも存在しない場合
         # プログラムを続行すべきでない
         raise FatalErrException()
-    print_log(f"Done. Info:{server_list[0]}")
+    print_log(f"Done. {server_list[0]}")
     return server_list[0].get_host()
 
 
