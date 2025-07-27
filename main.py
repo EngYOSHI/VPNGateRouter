@@ -20,7 +20,6 @@ DEBUG: bool = False
 NIC_UPSTREAM: str = "eth0"
 NIC_VPN: str = "br_eth1"
 NIC_VPNGATE: str = "vpn_vpngate"
-VPNGATE_FIX: str = None  # "118.106.1.118:1496"
 VPNGATE_EXCEPTION_BY_OP: list[str] = ["Daiyuu Nobori_ Japan. Academic Use Only."]
 VPNGATE_COUNTRY: str = "JP"
 VPNGATE_PORT: int = None
@@ -213,8 +212,8 @@ def status_check_worker():
 
 
 def show_status(s: str):
-    match1 = re.search(r"Outgoing Data Size\s+\|([\d,]+) bytes", s)
-    match2 = re.search(r"Incoming Data Size\s+\|([\d,]+) bytes", s)
+    match1 = re.search(r"Outgoing Data Size\s*\|([\d,]+) bytes", s)
+    match2 = re.search(r"Incoming Data Size\s*\|([\d,]+) bytes", s)
     if match1 and match2:
         unit = ["bytes", "KB", "MB", "GB", "TB"]
         dout = conv_datasize(int(match1.group(1).replace(',', '')), unit)
@@ -267,9 +266,9 @@ def dhcp(loop: bool = True, log_disp_out: bool = True) -> (str, str):
             lease_text = f.read()
         if log_disp_out:
             print_debug(f"DHCP Lease information\n{lease_text}")
-        fixed_address_match = re.search(r"fixed-address\s+([\d.]+);", lease_text)
+        fixed_address_match = re.search(r"fixed-address ([\d\.]+);", lease_text)
         fixed_address = fixed_address_match.group(1) if fixed_address_match else None
-        routers_match = re.search(r"option routers\s+([\d.]+);", lease_text)
+        routers_match = re.search(r"option routers ([\d\.]+);", lease_text)
         routers = routers_match.group(1) if routers_match else None
         if fixed_address is None or routers is None:
             print_error("ParseDHCPData", "Obtained dhcp data was not valid.")
@@ -421,9 +420,7 @@ def runvpncmd(command: list[str], log_disp_out: bool = True) -> subprocess.Compl
 
 def vpn_status(key: str, log_disp_out: bool = True) -> (bool, str, str):
     res = runvpncmd(["accountstatusget", "vpngate"], log_disp_out=log_disp_out)
-    if errcheck_vpncmd_res(res):
-        return (False, None, None)
-    match = re.search(rf"{re.escape(key)}\s+\|(.+)", res.stdout)
+    match = re.search(rf"{re.escape(key)}\s*\|(.+)", res.stdout)
     if match:
         return (True, match.group(1).strip(), res.stdout)
     else:
@@ -431,7 +428,7 @@ def vpn_status(key: str, log_disp_out: bool = True) -> (bool, str, str):
 
 
 def errcheck_vpncmd_res(res: subprocess.CompletedProcess) -> bool:
-    if res.stdout[-3].rfind("The command completed successfully."):
+    if res.stdout.rfind("The command completed successfully.") >= 0:
         return False
     return True
 
