@@ -39,7 +39,6 @@ def loop():
             ip = _ip
         # Get vpn status
         _vpn = getvpnstatus()
-        # _vpn = "Connection Completed (Session Established)"
         logging.info(f"VPN status: {_vpn}")
         if _vpn != vpn:
             update = True
@@ -100,13 +99,20 @@ def runcmd(command: list[str]) -> subprocess.CompletedProcess:
 def getvpnstatus() -> str:
     command = ["vpncmd", "localhost", "/client", "/cmd", "accountstatusget", "vpngate"]
     res = runcmd(command)
-    if not res.stdout[-3].rfind("The command completed successfully."):
-        return "Not connected"
-    match = re.search(r"Session Status\s+\|(.+)", res.stdout)
+    if res.stdout.rfind("The specified VPN Connection Setting is not connected.") >= 0:
+        return "Not connected."
+    match = re.search(r"Session Status\s*\|(.+)", res.stdout)
     if match:
-        return match.group(1).strip()
-    else:
-        return "Status error"
+        status = match.group(1).strip()
+        if status.find("Connection Completed (Session Established)") >= 0:
+            status = "Connected."
+            match2 = re.search(r"Server Name\s*\|(.+)", res.stdout)
+            if match2:
+                status += f"\n{match2.group(1).strip()}"
+            return status
+        else:
+            return status
+    return "Unknown status."
 
 
 def chkroot():
