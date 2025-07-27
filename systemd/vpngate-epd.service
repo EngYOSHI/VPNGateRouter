@@ -6,6 +6,6 @@ After=vpngate-autocon.service
 User=root
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/screen -S vpngate -m -d /home/yoshi/vpngate/venv/bin/python /home/yoshi/vpngate/epd.py
+ExecStart=/usr/bin/screen -S vpngate-epd -m -d /opt/VPNGateRouter/venv/bin/python /opt/VPNGateRouter/epd.py
 [Install]
 WantedBy=multi-user.target

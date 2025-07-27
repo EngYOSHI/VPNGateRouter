@@ -7,6 +7,6 @@ After=isc-kea-dhcp4-server.service
 User=root
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/screen -S vpngate -m -d /home/yoshi/vpngate/venv/bin/python /home/yoshi/vpngate/main.py
+ExecStart=/usr/bin/screen -S vpngate -m -d /opt/VPNGateRouter/venv/bin/python /opt/VPNGateRouter/main.py
 [Install]
 WantedBy=multi-user.target
