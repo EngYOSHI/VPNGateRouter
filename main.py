@@ -24,6 +24,7 @@ VPNGATE_FIX: str = None  # "118.106.1.118:1496"
 VPNGATE_EXCEPTION_BY_OP: list[str] = ["Daiyuu Nobori_ Japan. Academic Use Only."]
 VPNGATE_COUNTRY: str = "JP"
 VPNGATE_PORT: int = None
+VPNGATE_MINSPEED: int = None  # Mbps単位
 
 status_error_event = Event()
 is_connected = False
@@ -471,6 +472,8 @@ def get_server_list():
             if VPNGATE_COUNTRY is not None and sinfo.country != VPNGATE_COUNTRY:
                 noadd = True
             if VPNGATE_PORT is not None and sinfo.port != VPNGATE_PORT:
+                noadd = True
+            if VPNGATE_MINSPEED is not None and sinfo.speed / 1000000 < VPNGATE_MINSPEED:
                 noadd = True
             if len(VPNGATE_EXCEPTION_BY_OP) > 0 and sinfo.operator in VPNGATE_EXCEPTION_BY_OP:
                 # OPで除外リストに追加されている場合，それを除外
