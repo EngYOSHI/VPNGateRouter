@@ -14,16 +14,19 @@ from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta
 from pathlib import Path
 import ipaddress
+from pathlib import Path
+import json
 
 CSV_URL: str = "https://www.vpngate.net/api/iphone/"
+JSON_PATH = "config.json"
 DEBUG: bool = False
 NIC_UPSTREAM: str = "eth0"
 NIC_VPN: str = "br_eth1"
 NIC_VPNGATE: str = "vpn_vpngate"
 VPNGATE_EXCEPTION_BY_OP: list[str] = ["Daiyuu Nobori_ Japan. Academic Use Only."]
 VPNGATE_COUNTRY: str = "JP"
-VPNGATE_PORT: int = None
-VPNGATE_MINSPEED: int = None  # Mbps単位
+VPNGATE_PORT: list[int] = []
+VPNGATE_MINSPEED: int = 0  # Mbps単位，0は指定なし
 
 status_error_event = Event()
 is_connected = False
@@ -38,6 +41,7 @@ def main():
     try:
         set_td()
         print_debug("Started.")
+        load_json()
         init()  # 初期設定
         while True:
             # ベストなVPNGateのサーバ情報を取得
@@ -77,6 +81,56 @@ def main():
         print_log("Exiting...")
         clean(vpngate_ip_list[-1])
         print_log("Ready to exit. BYE!")
+
+
+def load_json():
+    global VPNGATE_EXCEPTION_BY_OP
+    global VPNGATE_COUNTRY
+    global VPNGATE_PORT
+    global VPNGATE_MINSPEED
+    path = Path(__file__).resolve().parent.joinpath(JSON_PATH)
+    try:
+        with open(Path(path), 'r') as f:
+            j: dict = json.load(f)
+            VPNGATE_COUNTRY = dict_get(j, "country", VPNGATE_COUNTRY, type(VPNGATE_COUNTRY))
+            print_debug(f"VPNGATE_COUNTRY = {VPNGATE_COUNTRY}")
+            VPNGATE_EXCEPTION_BY_OP = dict_get(j, "exception.op", VPNGATE_EXCEPTION_BY_OP, type(VPNGATE_EXCEPTION_BY_OP))
+            print_debug(f"VPNGATE_EXCEPTION_BY_OP = {VPNGATE_EXCEPTION_BY_OP}")
+            VPNGATE_PORT = dict_get(j, "port", VPNGATE_PORT, type(VPNGATE_PORT))
+            print_debug(f"VPNGATE_PORT = {VPNGATE_PORT}")
+            VPNGATE_MINSPEED = dict_get(j, "minspeed", VPNGATE_MINSPEED, type(VPNGATE_MINSPEED))
+            print_debug(f"VPNGATE_MINSPEED = {VPNGATE_MINSPEED}")
+    except FileNotFoundError as e:
+        print_error(
+            "LOAD_JSON",
+            f"Config file {JSON_PATH} not found.",
+        )
+        err_exit()
+    except json.decoder.JSONDecodeError as e:
+        print_error(
+            "LOAD_JSON",
+            f"Format error in {JSON_PATH}",
+        )
+        err_exit()
+
+
+def dict_get(d: dict, key: str, default, expected_type):
+    keys = key.split(".")  # サブキーも指定されていた場合は分割
+    value = d
+    # サブキーを探索して値を得る．ない場合はデフォルト値
+    for k in keys:
+        if not isinstance(value, dict) or k not in value:
+            value = default
+            break
+        value = value[k]
+    # 値が想定したtypeでない場合はエラー→終了
+    if not isinstance(value, expected_type):
+        print_error(
+            "LOAD_JSON",
+            f"The type of the value \"{key}\" should be \"{expected_type.__name__}\"",
+        )
+        err_exit()
+    return value
 
 
 def init():
@@ -346,7 +400,7 @@ def get_bestserver() -> str:
         print_error("GetBestServer", "No server found.")
         # 利用可能なサーバが一つも存在しない場合
         # プログラムを続行すべきでない
-        raise FatalErrException()
+        err_exit()
     print_log(f"Done. {server_list[0]}")
     return server_list[0].get_host()
 
@@ -476,9 +530,9 @@ def get_server_list():
             noadd = False
             if VPNGATE_COUNTRY is not None and sinfo.country != VPNGATE_COUNTRY:
                 noadd = True
-            if VPNGATE_PORT is not None and sinfo.port != VPNGATE_PORT:
+            if len(VPNGATE_PORT) > 0 and sinfo.port not in VPNGATE_PORT:
                 noadd = True
-            if VPNGATE_MINSPEED is not None and sinfo.speed / 1000000 < VPNGATE_MINSPEED:
+            if VPNGATE_MINSPEED > 0 and sinfo.speed / 1000000 < VPNGATE_MINSPEED:
                 noadd = True
             if len(VPNGATE_EXCEPTION_BY_OP) > 0 and sinfo.operator in VPNGATE_EXCEPTION_BY_OP:
                 # OPで除外リストに追加されている場合，それを除外
