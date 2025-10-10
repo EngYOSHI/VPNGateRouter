@@ -415,7 +415,15 @@ def runcmd(command: list[str], log_disp_out: bool = True) -> subprocess.Complete
 
 def runvpncmd(command: list[str], log_disp_out: bool = True) -> subprocess.CompletedProcess:
     command = ["vpncmd", "localhost", "/client", "/cmd"] + command
-    return runcmd(command, log_disp_out=log_disp_out)
+    res = runcmd(command, log_disp_out=log_disp_out)
+    if "(Error code: 1)" in res.stdout:
+        print_error(
+            "VPNCMD",
+            f"FatalError! VPNClient is DOWN!! System rebooting...",
+        )
+        runcmd(["reboot"])
+        err_exit()
+    return res
 
 
 def vpn_status(key: str, log_disp_out: bool = True) -> (bool, str, str):
