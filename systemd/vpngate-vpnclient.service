@@ -1,0 +1,12 @@
+[Unit]
+Description=SoftEther VPN Client for VPNGateRouter
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/opt/VPNGateRouter/vpnclient/vpnclient start
+ExecStop=/opt/VPNGateRouter/vpnclient/vpnclient stop
+
+[Install]
+WantedBy=multi-user.target
+
