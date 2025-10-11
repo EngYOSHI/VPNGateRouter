@@ -2,6 +2,7 @@
 NIC="eth1"
 BRANCH="master"
 VPNCLIENT="https://github.com/SoftEtherVPN/SoftEtherVPN_Stable/releases/download/v4.44-9807-rtm/softether-vpnclient-v4.44-9807-rtm-2025.04.16-linux-arm64-64bit.tar.gz"
+REPO="https://github.com/EngYOSHI/VPNGateRouter/archive/refs/heads/"
 
 DL() {
   url=$1
@@ -75,7 +76,7 @@ echo "OK"
 # aptからパッケージのインストール
 echo "Installing packages..."
 curl -1sLf 'https://dl.cloudsmith.io/public/isc/kea-2-6/setup.deb.sh' | sudo -E bash
-apt -y install kea-dhcp4-server iptables screen isc-dhcp-client git
+apt -y install kea-dhcp4-server iptables screen isc-dhcp-client
 if [ $? -ne 0 ]; then
   echo "Error: Installing dependencies failed."
   exit 1
@@ -88,11 +89,10 @@ cd /opt
 screen -XS vpngate quit > /dev/null  # screenをタスキル
 systemctl stop vpngate-vpncliet 2>/dev/null  # 全部削除するため，念のためvpnclientをタスキル
 rm -rf VPNGateRouter
-git clone --branch ${BRANCH} https://github.com/EngYOSHI/VPNGateRouter
-if [ $? -ne 0 ]; then
-  echo "Error: Could not clone VPNGateRouter repo. (${BRANCH} branch)"
-  exit 1
-fi
+DL ${REPO}${BRANCH}.zip VPNGateRouter-${BRANCH}.zip
+unzip -q VPNGateRouter-${BRANCH}.zip
+rm VPNGateRouter-${BRANCH}.zip
+mv VPNGateRouter-${BRANCH} VPNGateRouter
 
 
 echo
@@ -113,9 +113,11 @@ sudo systemctl enable kea-dhcp4-server > /dev/null 2>&1
 
 echo
 echo "Installing SoftEther VPNClient..."
+cd /opt/VPNGateRouter
 DL ${VPNCLIENT} vpnclient.tar.gz
 tar -zxf vpnclient.tar.gz
-cd /opt/VPNGateRouter/vpnclient
+rm vpnclient.tar.gz
+cd vpnclient
 make main > /dev/null
 if [ $? -ne 0 ]; then
   echo "Error: Could not install vpnclient"
