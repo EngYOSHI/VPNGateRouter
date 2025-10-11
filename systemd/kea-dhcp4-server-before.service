@@ -1,0 +1,11 @@
+[Unit]
+Description=Automatic configure a bridge for kea dhcp server
+After=network.target
+Before=kea-dhcp4-server.service
+[Service]
+User=root
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash /usr/local/bin/kea-dhcp4-server-before.sh
+[Install]
+WantedBy=multi-user.target

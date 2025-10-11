@@ -17,6 +17,7 @@ import ipaddress
 from pathlib import Path
 import json
 
+VPNCMD_PATH: str = "/opt/VPNGateRouter/vpnclient/vpncmd"
 CSV_URL: str = "https://www.vpngate.net/api/iphone/"
 JSON_PATH = "config.json"
 DEBUG: bool = False
@@ -468,7 +469,7 @@ def runcmd(command: list[str], log_disp_out: bool = True) -> subprocess.Complete
 
 
 def runvpncmd(command: list[str], log_disp_out: bool = True) -> subprocess.CompletedProcess:
-    command = ["vpncmd", "localhost", "/client", "/cmd"] + command
+    command = [VPNCMD_PATH, "localhost", "/client", "/cmd"] + command
     res = runcmd(command, log_disp_out=log_disp_out)
     if "(Error code: 1)" in res.stdout:
         print_error(
@@ -676,6 +677,12 @@ def err_exit():
     os._exit(1)
 
 
+def chkexist():
+    if not os.path.isfile(VPNCMD_PATH):
+        print_error("FileNotFound", "vpncmd not found.")
+        err_exit()
+
+
 def chkroot():
     if os.geteuid() != 0 or os.getuid() != 0:
         print_error("chkroot", "Run As Root!!!")
@@ -688,5 +695,6 @@ class FatalErrException(Exception):
 
 if __name__ == "__main__":
     os.system("")  # Windowsにて、色付き文字を出力するためのおまじない
+    chkexist()
     chkroot()
     main()
