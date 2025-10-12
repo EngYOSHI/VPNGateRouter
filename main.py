@@ -34,9 +34,11 @@ is_connected = False
 is_overwrite_active = False
 check_point = None
 vpngate_ip_list: list[str] = []  # 切断されたサーバ
+stopping: bool = False  # 終了中(error code=1による誤再起動を防ぐ)
 
 
 def main():
+    global stopping
     global is_connected
     global vpngate_ip_list
     try:
@@ -79,6 +81,7 @@ def main():
         clean(vpngate_ip_list[-1])
         err_exit()
     except KeyboardInterrupt:
+        stopping = True
         print_log("Exiting...")
         clean(vpngate_ip_list[-1])
         print_log("Ready to exit. BYE!")
@@ -469,9 +472,10 @@ def runcmd(command: list[str], log_disp_out: bool = True) -> subprocess.Complete
 
 
 def runvpncmd(command: list[str], log_disp_out: bool = True) -> subprocess.CompletedProcess:
+    global stopping
     command = [VPNCMD_PATH, "localhost", "/client", "/cmd"] + command
     res = runcmd(command, log_disp_out=log_disp_out)
-    if "(Error code: 1)" in res.stdout:
+    if not stopping and "(Error code: 1)" in res.stdout:
         print_error(
             "VPNCMD",
             f"FatalError! VPNClient is DOWN!! System rebooting...",

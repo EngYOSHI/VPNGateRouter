@@ -174,10 +174,10 @@ echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-VPNGateRouter.conf
 cd /opt/VPNGateRouter
 python -m venv venv
 sudo venv/bin/pip install requests tzdata dnspython
-cp systemd/vpngate-autocon.service /etc/systemd/system/
-chown root:root /etc/systemd/system/vpngate-autocon.service
-chmod 755 /etc/systemd/system/vpngate-autocon.service
-systemctl enable vpngate-autocon.service
+cp systemd/vpngate.service /etc/systemd/system/
+chown root:root /etc/systemd/system/vpngate.service
+chmod 755 /etc/systemd/system/vpngate.service
+systemctl enable vpngate.service
 
 echo
 echo "Installation done! Rebooting..."
